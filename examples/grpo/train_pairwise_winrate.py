@@ -1,6 +1,6 @@
 import os
 import verifiers as vf
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 import traceback
 import sys
 
@@ -18,6 +18,8 @@ CONFIG = {
     "WANDB_NAME": "Fenrisulfr-14b-lora-64",
     "JUDGE_MAX_WORKERS": "128",
     "JUDGE_MICRO_BS": "128",
+    "RUBRIC_PATH": "/home/Ubuntu/Mango/verifiers/rubric.md",
+    "BAD_NGRAMS_PATH": "/home/Ubuntu/Mango/verifiers/ngram.txt",
 }
 os.environ.update({k: str(v) for k, v in CONFIG.items() if v is not None})
 
@@ -68,6 +70,31 @@ def main():
     )
     peft_config = vf.lora_defaults(r=64, alpha=16)
 
+    # Swap to weighted rubric deviation
+    try:
+        from verifiers.rubrics.weighted_rubric_deviation import WeightedRubricDeviationRubric
+        rubric_path = os.environ.get("RUBRIC_PATH", "rubric.md")
+        with open(rubric_path, "r", encoding="utf-8") as f:
+            rubric_text = f.read()
+        judge_sync = OpenAI(
+            base_url=os.environ.get("JUDGE_BASE_URL", "http://localhost:8000/v1"),
+            api_key=os.environ.get("JUDGE_API_KEY", ""),
+        )
+        vf_env.rubric = WeightedRubricDeviationRubric(
+            judge_client=judge_sync,
+            judge_model=os.environ.get("JUDGE_MODEL", "your-ab-rm-model"),
+            rubric_text=rubric_text,
+        )
+        vf_env.rubric.ngram_n = 3
+        vf_env.rubric.ngram_repeat_penalty = 0.02
+        vf_env.rubric.complexity_penalty_scale = 0.02
+        bad_path = os.environ.get("BAD_NGRAMS_PATH", "")
+        if bad_path:
+            vf_env.rubric.load_bad_ngrams(bad_path)
+            vf_env.rubric.bad_ngram_penalty_scale = 0.05
+    except Exception as e:
+        print(f"[WARN] Falling back to existing rubric: {e}")
+
     trainer = vf.GRPOTrainer(
         model=model,
         env=vf_env,
@@ -76,15 +103,7 @@ def main():
         peft_config=peft_config,
     )
 
-    if hasattr(vf_env, "rubric") and hasattr(vf_env.rubric, "parallelize_pairs"):
-        vf_env.rubric.baseline_path = "/home/Ubuntu/Mango/verifiers/baseline.jsonl"
-        vf_env.rubric.baseline_weight = 0.3
-        vf_env.rubric.enable_pairwise_thread_pool = True
-        vf_env.rubric.judge_max_workers = 64
-        vf_env.rubric.judge_micro_batch_size = 64
-        vf_env.rubric.parallelize_pairs = False
-        vf_env.rubric.symmetric_pairs = False
-        vf_env.rubric.include_self = True
+    # No pairwise settings needed for weighted rubric deviation
     try:
         trainer.train()
     except Exception:
