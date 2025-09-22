@@ -16,6 +16,7 @@ from .parsers.parser import Parser
 from .parsers.think_parser import ThinkParser
 from .parsers.xml_parser import XMLParser
 from .rubrics.judge_rubric import JudgeRubric
+from .rubrics.pairwise_winrate_rubric import PairwiseWinrateRubric
 from .rubrics.rubric import Rubric
 from .rubrics.rubric_group import RubricGroup
 from .rubrics.tool_rubric import ToolRubric
@@ -68,6 +69,7 @@ __all__ = [
     "XMLParser",
     "Rubric",
     "JudgeRubric",
+    "PairwiseWinrateRubric",
     "RubricGroup",
     "ToolRubric",
     "MathRubric",

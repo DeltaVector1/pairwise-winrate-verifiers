@@ -1,0 +1,19 @@
+[project]
+name = "pairwise-winrate"
+version = "0.1.0"
+description = "jfijeijirjfijrifkjrefifjerijfio"
+tags = ["pairwise", "winrate", "single-turn", "llm-judge", "train"]
+dependencies = [
+    "verifiers>=0.1.4.dev0",
+    "datasets",
+    "openai",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["pairwise_winrate.py", "README.md"]
+
+

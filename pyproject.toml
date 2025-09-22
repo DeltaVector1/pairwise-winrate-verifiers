@@ -132,6 +132,7 @@ packages = ["verifiers"]
 dev = [
     "build>=1.2.2.post1",
     "twine>=6.1.0",
+    "verifiers[all]",
 ]
 
 [project.urls]
@@ -187,3 +188,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.uv.sources]
+verifiers = { workspace = true }
