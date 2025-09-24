@@ -361,6 +361,30 @@ This is particularly useful for:
 - Evaluating general capabilities across domains
 - Creating curriculum learning setups
 
+## POLAR-RFT Environment
+
+We provide a `polar_rft` environment that scores completions using the POLAR reward model server.
+
+Usage:
+
+```python
+import verifiers as vf
+
+env = vf.load_environment(
+    "polar_rft",
+    dataset_name="gsm8k",
+    split="test",
+    n=128,
+    polar_config={
+        "model_path": "internlm/POLAR-7B",
+        "server_type": "sglang",
+        "server_address": "127.0.0.1:30000",
+    },
+)
+```
+
+Train example located at `examples/grpo/train_polar_rft.py` with a simple top-of-file config.
+
 ## Installing from Repository
 
 Install environments from the verifiers repository:

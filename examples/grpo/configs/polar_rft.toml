@@ -1,0 +1,43 @@
+[model]
+name = "Qwen/Qwen2.5-1.5B-Instruct"
+
+[env]
+dataset_path = "/home/Ubuntu/Mango/verifiers/c2_deduped_32k_llama3_qwen2_tok_deanon_dsclean_1.3.jsonl"
+split = "train"
+n = 128
+seed = 0
+
+[env.polar_config]
+model_path = "internlm/POLAR-7B"
+server_type = "vllm"
+server_address = "https://command-die-anniversary-robert.trycloudflare.com"
+max_length = 32768
+max_response_length = 512
+response_cut_side = "right"
+debug = true
+
+[trainer]
+run_name = "polar-rft-gsm8k-demo"
+per_device_train_batch_size = 2
+num_generations = 8
+gradient_accumulation_steps = 2
+learning_rate = 1e-6
+beta = 0.001
+max_steps = 50
+max_grad_norm = 0.1
+num_iterations = 1
+loss_type = "dr_grpo"
+epsilon = 0.2
+
+# generation
+max_tokens = 512
+max_prompt_length = 512
+max_completion_length = 1024
+temperature = 1.0
+top_p = 1.0
+# top_k = 50
+
+# logging
+logging_steps = 1
+report_to = "wandb"
+

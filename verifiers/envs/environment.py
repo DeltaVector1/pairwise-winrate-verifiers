@@ -193,7 +193,7 @@ class Environment(ABC):
     async def get_model_response(
         self,
         client: AsyncOpenAI,
-        model: str,
+        model: str | None,
         prompt: Messages,
         oai_tools: list[ChatCompletionToolParam] | None = None,
         sampling_args: SamplingArgs | None = None,
@@ -307,13 +307,20 @@ class Environment(ABC):
         """
         async with semaphore:
             return await self.rollout(
-                client, model, prompt, answer, task, info, sampling_args, **kwargs
+                client,
+                model or self.model or "",
+                prompt,
+                answer,
+                task,
+                info,
+                sampling_args,
+                **kwargs,
             )
 
     async def run_rollouts(
         self,
         client: AsyncOpenAI,
-        model: str,
+        model: str | None,
         prompts: list[Messages],
         answers: list[str],
         tasks: list[str],
@@ -346,7 +353,14 @@ class Environment(ABC):
         else:
             rollout_tasks = [
                 self.rollout(
-                    client, model, prompt, answer, task, info, sampling_args, **kwargs
+                    client,
+                    model or self.model or "",
+                    prompt,
+                    answer,
+                    task,
+                    info,
+                    sampling_args,
+                    **kwargs,
                 )
                 for prompt, answer, task, info in zip(prompts, answers, tasks, infos)
             ]

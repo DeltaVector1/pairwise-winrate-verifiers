@@ -520,25 +520,33 @@ class GRPOTrainer(Trainer):
         host = args.vllm_server_host
         port = args.vllm_server_port
         vllm_base_url = f"http://{host}:{port}/v1"
-        self.client_config = {
-            "base_url": vllm_base_url,
-            "api_key": "EMPTY",
-            "http_client_args": {
-                "limits": {"max_connections": args.max_concurrent},
-                "timeout": args.async_generation_timeout,
-            },
-        }
+        if args.client is not None:
+            self.client_config = {
+                "client": args.client,
+                "model": args.model or model.config._name_or_path,
+                "managed": False,
+            }
+        else:
+            self.client_config = {
+                "base_url": vllm_base_url,
+                "api_key": "EMPTY",
+                "http_client_args": {
+                    "limits": {"max_connections": args.max_concurrent},
+                    "timeout": args.async_generation_timeout,
+                },
+            }
 
         # vLLM client for weight syncing only; only import if used
         from verifiers.inference.vllm_client import VLLMClient
 
-        self.vllm_client = VLLMClient(
-            host=host, port=port, connection_timeout=args.vllm_server_timeout
-        )
-        # Only initialize communicator on the main process
-        # Other processes will only use the client for non-NCCL operations
-        if self.accelerator.is_main_process:
-            self.vllm_client.init_communicator()
+        if args.client is not None:
+            self.vllm_client = None
+        else:
+            self.vllm_client = VLLMClient(
+                host=host, port=port, connection_timeout=args.vllm_server_timeout
+            )
+            if self.accelerator.is_main_process:
+                self.vllm_client.init_communicator()
 
         self._last_loaded_step = (
             0  # Initialize to 0 since vLLM already has initial weights
@@ -579,7 +587,7 @@ class GRPOTrainer(Trainer):
         self.async_generator = AsyncBatchGenerator(
             env=self.env,
             client_config=self.client_config,
-            model_name=self._get_model_name(),
+            model_name=self.client_config.get("model", self._get_model_name()),
             sampling_args=self._get_sampling_args(),
             num_batches_ahead=self.num_batches_ahead,
             max_queue_size=args.async_max_queue_size,

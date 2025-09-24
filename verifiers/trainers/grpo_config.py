@@ -1,7 +1,7 @@
 # adapted from https://github.com/huggingface/trl/blob/main/trl/trainer/grpo_config.py
 
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional, Union, Any
 
 import transformers
 from packaging import version
@@ -210,6 +210,8 @@ class GRPOConfig(TrainingArguments):
             "after the timeout, a `ConnectionError` is raised."
         },
     )
+    client: Optional[Any] = field(default=None)
+    model: Optional[str] = field(default=None)
     # Parameters that control the training
     learning_rate: float = field(
         default=1e-6,

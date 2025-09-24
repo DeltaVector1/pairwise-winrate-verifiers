@@ -1,0 +1,20 @@
+[project]
+name = "polar-rft"
+description = "POLAR reward-model-scored environment for verifiers"
+tags = ["polar", "reward", "rl", "train"]
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "verifiers>=0.1.2.post0",
+    "transformers",
+    "requests",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["polar_rft.py"]
+
+

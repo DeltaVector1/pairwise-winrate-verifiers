@@ -39,7 +39,7 @@ class MultiTurnEnv(Environment):
     async def rollout(
         self,
         client: AsyncOpenAI,
-        model: str,
+        model: str | None,
         prompt: Messages,
         answer: str = "",
         task: str = "default",
@@ -76,7 +76,7 @@ class MultiTurnEnv(Environment):
                 break
             response = await self.get_model_response(
                 client=client,
-                model=model,
+                model=model or self.model or "",
                 prompt=rollout,
                 oai_tools=info.get("oai_tools", None),
                 sampling_args=sampling_args,

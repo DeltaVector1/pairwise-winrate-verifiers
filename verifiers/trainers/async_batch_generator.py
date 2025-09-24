@@ -215,18 +215,21 @@ class AsyncBatchGenerator:
         import httpx
         from openai import AsyncOpenAI
 
-        self.client = AsyncOpenAI(
-            base_url=self.client_config["base_url"],
-            api_key=self.client_config["api_key"],
-            http_client=httpx.AsyncClient(
-                limits=httpx.Limits(
-                    max_connections=self.client_config["http_client_args"]["limits"][
-                        "max_connections"
-                    ]
+        if "client" in self.client_config and self.client_config["client"] is not None:
+            self.client = self.client_config["client"]
+        else:
+            self.client = AsyncOpenAI(
+                base_url=self.client_config["base_url"],
+                api_key=self.client_config["api_key"],
+                http_client=httpx.AsyncClient(
+                    limits=httpx.Limits(
+                        max_connections=self.client_config["http_client_args"][
+                            "limits"
+                        ]["max_connections"]
+                    ),
+                    timeout=self.client_config["http_client_args"]["timeout"],
                 ),
-                timeout=self.client_config["http_client_args"]["timeout"],
-            ),
-        )
+            )
 
         try:
             while not self.stop_event.is_set():
@@ -252,7 +255,7 @@ class AsyncBatchGenerator:
                     raise e
         finally:
             # Clean up the client
-            if self.client:
+            if self.client and self.client_config.get("managed", True):
                 loop.run_until_complete(self.client.close())
             # Clean up the event loop
             loop.close()

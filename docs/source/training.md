@@ -32,7 +32,7 @@ The included `GRPOTrainer` supports GRPO-style training via Accelerate/DeepSpeed
 import verifiers as vf
 
 # 1. Create environment
-env = vf.load_environment("math-python")
+env = vf.load_environment("math-python")  # or "polar_rft" (requires POLAR server)
 
 # 2. Load model
 model, tokenizer = vf.get_model_and_tokenizer("Qwen/Qwen2.5-1.5B-Instruct")
@@ -68,6 +68,14 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5 vf-vllm --model Qwen/Qwen2.5-7B-Instruct \
 # Example: 2 GPUs for training
 CUDA_VISIBLE_DEVICES=6,7 accelerate launch --config-file configs/zero3.yaml \
     --num-processes 2 your_training_script.py
+```
+
+### POLAR-RFT Example
+
+Ensure a POLAR reward server is available (e.g., sglang at `127.0.0.1:30000`). Then run:
+
+```bash
+uv run python examples/grpo/train_polar_rft.py
 ```
 
 ## Key Hyperparameters

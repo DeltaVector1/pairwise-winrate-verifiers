@@ -15,3 +15,9 @@ class SingleTurnEnv(MultiTurnEnv):
     ) -> tuple[Messages, State]:
         # never called in MultiTurnEnv.rollout
         return [{"role": "user", "content": ""}], state
+
+    def attach_client(self, client, model: str | None = None):
+        """Attach a remote inference client for policy generation."""
+        self.client = client  # type: ignore
+        if model is not None:
+            self.model = model  # type: ignore
