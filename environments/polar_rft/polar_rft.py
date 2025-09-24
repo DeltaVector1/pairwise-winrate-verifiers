@@ -5,18 +5,25 @@ from typing import Any, Dict, List
 import json
 import sys
 from pathlib import Path
+import os
 
 from datasets import Dataset
 
 import verifiers as vf
-from verifiers.envs.multiturn_env import MultiTurnEnv
+from verifiers.envs.singleturn_env import SingleTurnEnv
 from verifiers.parsers.think_parser import ThinkParser
 from verifiers.rubrics.rubric import Rubric
 
 
 def _import_polar_client(repo_root: Path | None = None):
+    """
+    Import POLARClient from the bundled POLAR_RFT directory.
+
+    Falls back to raising ImportError with a helpful message if unavailable.
+    """
     # Prefer local repo layout first: <repo>/POLAR_RFT/src
     if repo_root is None:
+        # environments/polar_rft/ -> repo root two levels up
         repo_root = Path(__file__).resolve().parents[2]
     polar_src = repo_root / "POLAR_RFT" / "src"
     if polar_src.exists():
@@ -29,73 +36,111 @@ def _import_polar_client(repo_root: Path | None = None):
             raise ImportError(
                 f"Failed to import POLARClient from {polar_src}: {e}"
             )
-    # Fallback to installed package
-    from polar.reward_func import POLARClient  # type: ignore
+    # Fallback to installed package if available
+    try:
+        from polar.reward_func import POLARClient  # type: ignore
 
-    return POLARClient
+        return POLARClient
+    except Exception:
+        pass
+    raise ImportError(
+        "POLAR_RFT not found. Ensure POLAR_RFT/src is present in the repo or install the POLAR package."
+    )
 
 
 def _load_sharegpt_jsonl(path: str | Path) -> Dataset:
-    path = str(path)
+    path = Path(path)
     rows: List[Dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             obj = json.loads(line)
             conv = obj.get("conversations", [])
-            # Build initial prompt messages: include system if present, then first human
-            messages: List[Dict[str, str]] = []
-            system = next((x for x in conv if x.get("from") == "system"), None)
-            if system and system.get("value"):
-                messages.append({"role": "system", "content": str(system["value"])})
-            # collect human/assistant in order
-            user_msgs: List[str] = []
-            assistant_refs: List[str] = []
+            system_msg: str | None = None
+            # Collect ordered user/assistant pairs
+            pairs: List[tuple[str, str]] = []
+            pending_user: str | None = None
             for turn in conv:
-                if turn.get("from") == "human":
-                    user_msgs.append(str(turn.get("value", "")))
-                elif turn.get("from") == "gpt":
-                    assistant_refs.append(str(turn.get("value", "")))
-            if not user_msgs:
+                origin = turn.get("from")
+                value = str(turn.get("value", ""))
+                if origin == "system" and system_msg is None:
+                    system_msg = value
+                elif origin == "human":
+                    pending_user = value
+                elif origin == "gpt" and pending_user is not None:
+                    pairs.append((pending_user, value))
+                    pending_user = None
+            if not pairs:
                 continue
-            # seed initial user
-            messages.append({"role": "user", "content": user_msgs[0]})
-            info: Dict[str, Any] = {
-                "user_msgs": user_msgs,
-                "assistant_refs": assistant_refs,
-            }
-            rows.append({
-                "prompt": messages,
-                "answer": "",  # not used; refs in info
-                "task": "sharegpt-polar",
-                "info": info,
-            })
+            # Construct dataset rows per assistant turn
+            for idx, (user_text, assistant_text) in enumerate(pairs):
+                messages: List[Dict[str, str]] = []
+                if system_msg:
+                    messages.append({"role": "system", "content": system_msg})
+                # include history up to previous assistant turns
+                for prev_user, prev_assistant in pairs[:idx]:
+                    messages.append({"role": "user", "content": prev_user})
+                    messages.append({"role": "assistant", "content": prev_assistant})
+                # current user prompt
+                messages.append({"role": "user", "content": user_text})
+
+                info = {
+                    "conversation_id": obj.get("id"),
+                    "turn_index": idx,
+                }
+                rows.append(
+                    {
+                        "prompt": messages,
+                        "answer": assistant_text,
+                        "task": "sharegpt-polar",
+                        "info": info,
+                    }
+                )
+    if not rows:
+        raise ValueError(f"No usable conversations found in ShareGPT file: {path}")
     return Dataset.from_list(rows)
 
 
-class ShareGPTPOLAREnv(MultiTurnEnv):
+class POLARRFTEnv(SingleTurnEnv):
+    """
+    A SingleTurnEnv that scores completions with the POLAR reward model server.
+
+    Supports classic QA datasets via `dataset_name` as well as ShareGPT-style
+    JSONL via `dataset_path`.
+    """
+
     def __init__(
         self,
-        dataset_path: str,
+        dataset_name: str = "gsm8k",
+        split: str | None = None,
+        n: int | None = None,
+        seed: int = 0,
+        dataset_path: str | None = None,
         polar_config: Dict[str, Any] | None = None,
+        system_prompt: str | None = None,
         **kwargs,
     ):
-        dataset = _load_sharegpt_jsonl(dataset_path)
+        dataset: Dataset
+        if dataset_path:
+            dataset = _load_sharegpt_jsonl(dataset_path)
+        else:
+            dataset = vf.load_example_dataset(dataset_name, split=split, n=n, seed=seed)
+
         parser = ThinkParser()
 
         POLARClient = _import_polar_client()
         polar_config = polar_config or {}
         rm_path = polar_config.get("model_path", "internlm/POLAR-7B")
-        rm_server_type = polar_config.get("server_type", "vllm")
-        rm_address = polar_config.get("server_address", "http://127.0.0.1:8000")
+        rm_server_type = polar_config.get("server_type", "sglang")
+        rm_address = polar_config.get("server_address", "127.0.0.1:30000")
         rm_max_length = polar_config.get("max_length", 16384)
         rm_max_response_length = polar_config.get("max_response_length", 4096)
         rm_response_cut_side = polar_config.get("response_cut_side", "right")
-        debug_flag = bool(polar_config.get("debug", False))
 
-        self.rm_client = POLARClient(
+        debug_flag = bool(polar_config.get("debug", False))
+        rm_client = POLARClient(
             path=rm_path,
             server_type=rm_server_type,
             server_address=rm_address,
@@ -107,90 +152,61 @@ class ShareGPTPOLAREnv(MultiTurnEnv):
 
         rubric = Rubric(parser=parser)
 
-        async def polar_multi_reward(prompt, completion, state, **_: Any) -> float:
-            # Extract generated assistant messages
-            assert isinstance(completion, list)
-            gen_assistant = [m.get("content", "") for m in completion if m.get("role") == "assistant"]
-            ref_assistant: List[str] = state.get("assistant_refs", [])
-            user_msgs: List[str] = state.get("user_msgs", [])
-            # Build batch for POLAR per assistant turn (align by index)
-            batch = []
-            max_i = min(len(gen_assistant), len(ref_assistant))
-            # Build prompt context for each turn i using system + alternating prior turns
-            # We can reconstruct from state["base_system"] and user_msgs
-            base_system: str = state.get("base_system", "")
-            for i in range(max_i):
-                # context: optional system + all user/assistant up to user i
-                msgs: List[str] = []
-                if base_system:
-                    msgs.append(base_system)
-                for j in range(i + 1):
-                    msgs.append(user_msgs[j] if j < len(user_msgs) else "")
-                    if j < len(gen_assistant):
-                        # Use generated assistant so far for context
-                        msgs.append(gen_assistant[j])
-                ctx = "\n".join(msgs)
-                batch.append({
-                    "prompt": ctx,
-                    "reference": ref_assistant[i] if i < len(ref_assistant) else "",
-                    "output": gen_assistant[i],
-                    "wrapper": "sft",
-                })
-            if not batch:
-                return 0.0
-            scores = self.rm_client(batch) or []
-            if not scores:
-                return 0.0
-            # Map [-1,1] -> [0,1]
-            norm = [max(0.0, min(1.0, (float(s) + 1.0) / 2.0)) for s in scores]
-            return float(sum(norm) / len(norm))
+        async def polar_reward(
+            prompt, completion, answer, state, info, parser, **_: Any
+        ) -> float:
+            """
+            Compute POLAR score for a single rollout using the reward server.
+            Falls back to 0.0 on failure to keep training robust.
+            """
+            try:
+                # Extract plain text from completion
+                if isinstance(completion, str):
+                    completion_text = completion
+                else:
+                    completion_text = str(completion[-1].get("content", "")) if completion else ""
 
-        rubric.add_reward_func(polar_multi_reward, weight=1.0)
+                # POLAR client expects dict with prompt/reference/output
+                data = [
+                    {
+                        "prompt": prompt,
+                        "reference": answer,
+                        "output": completion_text,
+                        "wrapper": "sft",
+                    }
+                ]
+                if debug_flag or os.getenv("POLAR_DEBUG", "").lower() in ("1", "true", "yes", "y"):
+                    preview = completion_text[:160].replace("\n", " ")
+                    print(f"[POLAR][call] server={rm_server_type} addr={rm_address} model={rm_path} sample='{preview}'")
+                scores = rm_client(data)
+                if scores and len(scores) > 0:
+                    # scores typically in [-1, 1]; map to [0, 1]
+                    s = float(scores[0])
+                    return max(0.0, min(1.0, (s + 1.0) / 2.0))
+            except Exception:
+                return 0.0
+            return 0.0
+
+        rubric.add_reward_func(polar_reward, weight=1.0)
+        rubric.add_reward_func(parser.get_format_reward_func(), weight=0.1)
+
+        if system_prompt is None:
+            system_prompt = (
+                "Think step-by-step inside <think>...</think>. Then provide the final answer."
+            )
 
         super().__init__(
             dataset=dataset,
-            system_prompt=None,
+            system_prompt=system_prompt,
             parser=parser,
             rubric=rubric,
             message_type="chat",
             **kwargs,
         )
 
-    async def setup_state(self, state: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        # Extract info
-        info: Dict[str, Any] = state.get("info", {})
-        user_msgs: List[str] = list(info.get("user_msgs", []))
-        assistant_refs: List[str] = list(info.get("assistant_refs", []))
-        # Cache base system from first message if present
-        base_system = ""
-        for m in state.get("prompt", []):
-            if m.get("role") == "system":
-                base_system = str(m.get("content", ""))
-                break
-        state["user_msgs"] = user_msgs
-        state["assistant_refs"] = assistant_refs
-        state["base_system"] = base_system
-        state["assistant_count"] = 0
-        state["next_user_idx"] = 1  # we already seeded user_msgs[0]
-        return state
-
-    async def is_completed(self, messages: List[Dict[str, str]], state: Dict[str, Any], **kwargs) -> bool:
-        # Complete after we produced as many assistant turns as references
-        gen_assistant = [m for m in messages if m.get("role") == "assistant"]
-        return len(gen_assistant) >= len(state.get("assistant_refs", []))
-
-    async def env_response(self, messages: List[Dict[str, str]], state: Dict[str, Any], **kwargs) -> tuple[List[Dict[str, str]], Dict[str, Any]]:
-        # After each assistant, append the next ground-truth user turn, if any
-        next_user_idx: int = state.get("next_user_idx", 1)
-        user_msgs: List[str] = state.get("user_msgs", [])
-        if next_user_idx < len(user_msgs):
-            nxt = user_msgs[next_user_idx]
-            state["next_user_idx"] = next_user_idx + 1
-            return ([{"role": "user", "content": nxt}], state)
-        return ([], state)
 
 
 def load_environment(**kwargs):
-    return ShareGPTPOLAREnv(**kwargs)
+    return POLARRFTEnv(**kwargs)
 
 
